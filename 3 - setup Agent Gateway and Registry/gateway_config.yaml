@@ -1,0 +1,8 @@
+description: "Egress Agent Gateway for Order Assistant multi-agent application"
+protocols:
+  - MCP
+registries:
+  - "//agentregistry.googleapis.com/projects/PROJECT_ID_PLACEHOLDER/locations/REGION_PLACEHOLDER"
+labels:
+  app: order-assistant
+  stage: stage-3
