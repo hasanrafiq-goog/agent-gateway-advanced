@@ -96,7 +96,7 @@ def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
 
 # Shared model config preserved from scaffold
 MODEL_CONFIG = Gemini(
-    model="gemini-flash-latest",
+    model="gemini-3.8-flash",
     retry_options=types.HttpRetryOptions(attempts=3),
 )
 

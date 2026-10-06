@@ -64,9 +64,9 @@ echo "   - MCP Server URL : $MCP_SSE_URL"
 echo ""
 
 # ------------------------------------------------------------------------------
-# 2. Update .env in Stage 1 with Live Cloud Run MCP Server URL
+# 2. Update .env in Stage 1 with Live Project, Location & MCP Server URL
 # ------------------------------------------------------------------------------
-echo "==> [1/6] Updating Stage 1 .env with live Cloud Run MCP URL..."
+echo "==> [1/6] Updating Stage 1 .env with live Project, Global Location & MCP URL..."
 AGENT_DIR="$SCRIPT_DIR/../1 - multi agent ADK app/order-assistant"
 
 if [ ! -d "$AGENT_DIR" ]; then
@@ -74,8 +74,18 @@ if [ ! -d "$AGENT_DIR" ]; then
   exit 1
 fi
 
-sed -i.bak -E "s|^MCP_SERVER_URL=.*|MCP_SERVER_URL=${MCP_SSE_URL}|" "$AGENT_DIR/.env" || echo "MCP_SERVER_URL=${MCP_SSE_URL}" >> "$AGENT_DIR/.env"
-rm -f "$AGENT_DIR/.env.bak"
+if [ ! -f "$AGENT_DIR/.env" ] && [ -f "$AGENT_DIR/.env.example" ]; then
+  cp "$AGENT_DIR/.env.example" "$AGENT_DIR/.env"
+fi
+
+cat > "$AGENT_DIR/.env" << EOF
+GOOGLE_GENAI_USE_VERTEXAI=true
+GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
+GOOGLE_CLOUD_LOCATION=global
+MCP_SERVER_URL=${MCP_SSE_URL}
+EOF
+echo "   ✅ Configured .env with project: $PROJECT_ID, location: global, MCP: $MCP_SSE_URL"
+
 
 # ------------------------------------------------------------------------------
 # 3. Enhance Agent with Agent Runtime deployment target (if not already set)

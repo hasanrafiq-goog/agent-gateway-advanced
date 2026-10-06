@@ -91,7 +91,9 @@ uv run --with "mcp>=1.6.0,<2.0.0" --with uvicorn python server.py
 ### Step 2: Run the ADK 2.0 Multi-Agent App (Terminal 2)
 ```bash
 cd "order-assistant"
+cp .env.example .env   # Ensure GOOGLE_CLOUD_PROJECT is set to your project ID
 uv sync
+
 
 # Option 1: Quick CLI test (Eligible order -> Refunded)
 agents-cli run "Check order ORD-102 and refund it if eligible."

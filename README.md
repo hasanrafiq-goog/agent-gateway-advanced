@@ -200,6 +200,7 @@ agent-gateway-advanced/
 - **Local Run**:
   ```bash
   cd "1 - multi agent ADK app/order-assistant"
+  cp .env.example .env   # Set GOOGLE_CLOUD_PROJECT to your GCP Project ID
   agents-cli run "Check order ORD-102 and payment card."
   ```
 
