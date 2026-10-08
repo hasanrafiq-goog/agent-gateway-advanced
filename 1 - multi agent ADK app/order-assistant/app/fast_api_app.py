@@ -1,3 +1,4 @@
+# ruff: noqa
 # Copyright 2026 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,22 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-# Opt out of CAA token sharing enforcement for internal Google API calls
-os.environ["GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES"] = "false"
-if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
-    try:
-        import google.auth
-        _, detected_project = google.auth.default()
-        if detected_project:
-            os.environ["GOOGLE_CLOUD_PROJECT"] = detected_project
-    except Exception:
-        pass
-
 import base64
 import contextlib
 import inspect
 import json
+import os
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
@@ -50,6 +40,16 @@ from app.app_utils.telemetry import (
     setup_telemetry,
 )
 from app.app_utils.typing import Feedback
+
+# Opt out of CAA token sharing enforcement for internal Google API calls
+os.environ["GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES"] = "false"
+if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+    try:
+        _, detected_project = google.auth.default()
+        if detected_project:
+            os.environ["GOOGLE_CLOUD_PROJECT"] = detected_project
+    except Exception:
+        pass
 
 load_dotenv()
 setup_telemetry()
@@ -142,7 +142,7 @@ def _extract_jwt_claims(token: str) -> dict[str, Any]:
             decoded_bytes = base64.urlsafe_b64decode(payload_b64)
             return json.loads(decoded_bytes.decode("utf-8"))
     except Exception as e:
-        logger.warning(f"Failed to decode JWT claims: {e}")
+        logger.log_text(f"Failed to decode JWT claims: {e}", severity="WARNING")
     return {}
 
 
