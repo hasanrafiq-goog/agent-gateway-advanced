@@ -20,6 +20,7 @@ Governed by cryptographic **SPIFFE Agent Identity**, **Regional Model Armor with
    - [Stage 3: Egress Agent Gateway & Registry](#stage-3-setup-egress-agent-gateway--agent-registry)
    - [Stage 4: Agent Engine & SPIFFE Identity](#stage-4-deploy-to-vertex-ai-agent-engine)
    - [Stage 5: Model Armor SDP & Tool Denial](#stage-5-egress-model-armor-sdp--mcp-tool-governance)
+   - [Stage 6: Client JWT Auth & Session Handshake](#stage-6-client-jwt-authentication--session-handshake)
 7. [Live Verification & Proof of Enforcement](#-live-verification--proof-of-enforcement)
 8. [Prerequisites & Portability Guide](#-prerequisites--portability-guide)
 
@@ -299,11 +300,20 @@ Stage 1 (Local Dev)        Stage 3 (Gateway Setup)      Stage 4 (Agent Deploy)  
    - When Stage 5 attaches Model Armor SDP (`CONTENT_AUTHZ`) and MCP Tool Denial (`REQUEST_AUTHZ`), the gateway performs outbound TLS inspection.
    - Because the Reasoning Engine was already deployed in Stage 4 with the gateway's CA in its trust store, all outbound MCP tool calls are inspected and transformed without any TLS handshake or `self-signed certificate in chain` errors.
 
+### Stage 6: Client JWT Authentication & Session Handshake
+
+In enterprise architectures, end-users authenticate via third-party Identity Providers (Okta, Entra ID, Ping) and send an initial JWT containing their identity, roles, and scopes (`orders:read`).
+
+* **Reverse-Proxy Passthrough (`/api/*`)**: Clients send their JWT once in the `X-User-Token` header to `POST /api/session/init`.
+* **State Persistence**: ADK creates an authenticated session in Vertex AI Sessions, storing user claims (`customer_bob`), email, and authorization scopes in `session.state`.
+* **Subsequent Turns**: All subsequent interactions invoke the standard Vertex AI `:streamQuery` endpoint passing only `session_id`.
+* **Outbound Context Propagation**: Outbound MCP tool calls dynamically attach `X-User-Token` to verify end-user entitlements downstream at the Cloud Run tool server.
+
 ---
 
 ## 🧪 Live Verification & Proof of Enforcement
 
-Both policies can be verified live using streaming queries against the deployed Vertex AI Reasoning Engine:
+Both policies and client authentication can be verified live using streaming queries against the deployed Vertex AI Reasoning Engine:
 
 ### Test 1: Allowed Tool with Sensitive Data Redaction
 **Query**:
@@ -348,6 +358,22 @@ Both policies can be verified live using streaming queries against the deployed 
    ERROR:mcp.client.sse:Error in post_writer
    ```
 ✅ **High-risk tool call blocked at the gateway perimeter!**
+
+---
+
+### Test 3: Client JWT Handshake with Scoped Session Retention
+**Execution**:
+Run the automated test script in Stage 6:
+```bash
+./6\ -\ client\ JWT\ authentication\ and\ session\ management/test_jwt_session.sh
+```
+
+**Execution Trace**:
+1. Client calls `POST /api/session/init` with `X-User-Token: <JWT>`.
+2. Reasoning engine parses `sub: customer_bob` and scopes `orders:read`, initializing session state.
+3. Client executes subsequent `:streamQuery` with the returned `session_id` querying order `ORD-102`.
+4. Agent delegates to `order_tracker`, accesses the private tool server, and returns the redacted order status.
+✅ **End-to-end client identity handshake and session retention verified!**
 
 ---
 

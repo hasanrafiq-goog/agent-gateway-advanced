@@ -14,6 +14,16 @@
 # limitations under the License.
 
 import os
+os.environ["GOOGLE_API_PREVENT_AGENT_TOKEN_SHARING_FOR_GCP_SERVICES"] = "false"
+if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
+    try:
+        import google.auth
+        _, detected_project = google.auth.default()
+        if detected_project:
+            os.environ["GOOGLE_CLOUD_PROJECT"] = detected_project
+    except Exception:
+        pass
+
 from pathlib import Path
 from typing import Any, Optional
 
@@ -65,6 +75,13 @@ def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
     import google.auth
     import google.auth.transport.requests
 
+    headers = {}
+    if context and hasattr(context, "state") and context.state:
+        user_jwt = context.state.get("user_jwt")
+        if user_jwt:
+            headers["X-User-Token"] = str(user_jwt)
+            headers["X-Forwarded-Authorization"] = f"Bearer {user_jwt}"
+
     parsed = urlparse(MCP_SERVER_URL)
     audience = f"{parsed.scheme}://{parsed.netloc}"
     auth_req = google.auth.transport.requests.Request()
@@ -74,7 +91,8 @@ def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
         from google.oauth2 import id_token
         token = id_token.fetch_id_token(auth_req, audience)
         if token:
-            return {"Authorization": f"Bearer {token}"}
+            headers["Authorization"] = f"Bearer {token}"
+            return headers
     except Exception:
         pass
 
@@ -86,12 +104,12 @@ def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
         credentials.refresh(auth_req)
         token = getattr(credentials, "id_token", None) or credentials.token
         target_project = os.getenv("GOOGLE_CLOUD_PROJECT") or project or ""
-        headers = {"Authorization": f"Bearer {token}"}
+        headers["Authorization"] = f"Bearer {token}"
         if target_project:
             headers["x-goog-user-project"] = target_project
         return headers
     except Exception:
-        return {}
+        return headers
 
 
 # Shared model config preserved from scaffold

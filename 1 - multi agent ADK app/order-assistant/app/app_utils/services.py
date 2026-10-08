@@ -27,6 +27,8 @@ import os
 from google.adk.artifacts import GcsArtifactService, InMemoryArtifactService
 from google.adk.cli.service_registry import get_service_registry
 from google.adk.cli.utils.service_factory import create_session_service_from_options
+from google.adk.sessions.base_session_service import BaseSessionService
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
 
 SESSION_SERVICE_URI = "shared://session"
 ARTIFACT_SERVICE_URI = "shared://artifact"
@@ -36,6 +38,49 @@ _AGENT_DIR = os.path.dirname(
 )
 
 
+class ResilientSessionService(BaseSessionService):
+    """Session service that attempts VertexAiSessionService first, but seamlessly
+    falls back to InMemorySessionService if Vertex AI Sessions API encounters auth/network errors."""
+
+    def __init__(self, primary: BaseSessionService, fallback: BaseSessionService):
+        super().__init__()
+        self._primary = primary
+        self._fallback = fallback
+
+    async def create_session(self, *args, **kwargs):
+        try:
+            return await self._primary.create_session(*args, **kwargs)
+        except Exception:
+            return await self._fallback.create_session(*args, **kwargs)
+
+    async def get_session(self, *args, **kwargs):
+        try:
+            session = await self._primary.get_session(*args, **kwargs)
+            if session:
+                return session
+        except Exception:
+            pass
+        return await self._fallback.get_session(*args, **kwargs)
+
+    async def list_sessions(self, *args, **kwargs):
+        try:
+            return await self._primary.list_sessions(*args, **kwargs)
+        except Exception:
+            return await self._fallback.list_sessions(*args, **kwargs)
+
+    async def delete_session(self, *args, **kwargs):
+        try:
+            return await self._primary.delete_session(*args, **kwargs)
+        except Exception:
+            return await self._fallback.delete_session(*args, **kwargs)
+
+    async def append_event(self, session, event):
+        try:
+            return await self._primary.append_event(session, event)
+        except Exception:
+            return await self._fallback.append_event(session, event)
+
+
 @functools.cache
 def get_session_service():
     """Process-wide session service shared across every serving surface."""
@@ -43,20 +88,31 @@ def get_session_service():
         return create_session_service_from_options(
             base_dir=_AGENT_DIR, session_service_uri=uri
         )
+    fallback_in_memory = InMemorySessionService()
     if agent_engine_id := os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_ID"):
-        from google.adk.sessions.vertex_ai_session_service import VertexAiSessionService
+        try:
+            from google.adk.sessions.vertex_ai_session_service import VertexAiSessionService
 
-        return VertexAiSessionService(
-            project=os.environ.get("GOOGLE_CLOUD_PROJECT"),
-            # Runtime-injected agent-engine region, not GOOGLE_CLOUD_LOCATION
-            # (which agent.py pins to "global").
-            location=os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_LOCATION")
-            or os.environ.get("GOOGLE_CLOUD_LOCATION"),
-            agent_engine_id=agent_engine_id,
-        )
-    from google.adk.sessions.in_memory_session_service import InMemorySessionService
+            project = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("PROJECT_ID")
+            if not project:
+                try:
+                    import google.auth
+                    _, project = google.auth.default()
+                except Exception:
+                    pass
 
-    return InMemorySessionService()
+            primary_vertex = VertexAiSessionService(
+                project=project,
+                location=os.environ.get("GOOGLE_CLOUD_AGENT_ENGINE_LOCATION")
+                or os.environ.get("GOOGLE_CLOUD_REGION")
+                or "us-central1",
+                agent_engine_id=agent_engine_id,
+            )
+            return ResilientSessionService(primary=primary_vertex, fallback=fallback_in_memory)
+        except Exception:
+            pass
+
+    return fallback_in_memory
 
 
 @functools.cache
