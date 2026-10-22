@@ -57,6 +57,7 @@ import google.auth
 import google.auth.transport.requests
 from google.adk.agents import Agent
 from google.adk.apps import App
+from google.adk.integrations.agent_registry import AgentRegistry
 from google.adk.models import Gemini
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools.mcp_tool import McpToolset
@@ -65,8 +66,9 @@ from google.adk.tools.skill_toolset import SkillToolset
 from google.genai import types
 from pydantic import BaseModel, Field
 
-MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://127.0.0.1:8085/sse")
 SKILLS_DIR = Path(__file__).parent / "skills"
+# Dynamically populated from Agent Registry when get_mcp_toolset() resolves the server
+_RESOLVED_MCP_URL = os.environ.get("MCP_SERVER_URL", "http://127.0.0.1:8085/sse")
 
 
 def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
@@ -82,7 +84,7 @@ def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
             headers["X-User-Token"] = str(user_jwt)
             headers["X-Forwarded-Authorization"] = f"Bearer {user_jwt}"
 
-    parsed = urlparse(MCP_SERVER_URL)
+    parsed = urlparse(_RESOLVED_MCP_URL)
     audience = f"{parsed.scheme}://{parsed.netloc}"
     auth_req = google.auth.transport.requests.Request()
 
@@ -110,6 +112,56 @@ def get_auth_headers(context: Optional[Any] = None) -> dict[str, str]:
         return headers
     except Exception:
         return headers
+
+
+def get_order_mcp_toolset(tool_filter: list[str]) -> McpToolset:
+    """Retrieves the MCP toolset dynamically from Google Cloud Agent Registry."""
+    global _RESOLVED_MCP_URL
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    registry_location = os.environ.get("AGENT_REGISTRY_LOCATION", "us-central1")
+    mcp_server_name = os.environ.get("MCP_SERVER_NAME", "")
+
+    if project_id and not os.environ.get("USE_LOCAL_MCP"):
+        try:
+            registry = AgentRegistry(
+                project_id=project_id,
+                location=registry_location,
+                header_provider=get_auth_headers,
+            )
+
+            # Auto-discover the registered order-mcp-server resource if MCP_SERVER_NAME is not explicitly set
+            if not mcp_server_name:
+                servers = registry.list_mcp_servers().get("mcpServers", [])
+                for srv in servers:
+                    if "order-mcp-server" in srv.get("mcpServerId", "") or "Order" in srv.get("displayName", ""):
+                        mcp_server_name = srv["name"]
+                        break
+                if not mcp_server_name and servers:
+                    mcp_server_name = servers[0]["name"]
+
+            if mcp_server_name:
+                server_info = registry.get_mcp_server(mcp_server_name)
+                for iface in server_info.get("interfaces", []):
+                    if iface.get("url"):
+                        _RESOLVED_MCP_URL = iface["url"]
+                        break
+
+                toolset = registry.get_mcp_toolset(mcp_server_name=mcp_server_name)
+                # Preserve unprefixed tool names (get_order, process_refund) for skills & Gateway CEL policies
+                toolset.tool_name_prefix = None
+                toolset.tool_filter = tool_filter
+                return toolset
+        except Exception:
+            pass
+
+    # Fallback for local development when Agent Registry is not used
+    return McpToolset(
+        connection_params=SseConnectionParams(
+            url=_RESOLVED_MCP_URL,
+        ),
+        header_provider=get_auth_headers,
+        tool_filter=tool_filter,
+    )
 
 
 # Shared model config preserved from scaffold
@@ -149,19 +201,13 @@ order_tracker = Agent(
         SkillToolset(
             skills=[load_skill_from_dir(SKILLS_DIR / "order-tracking")],
             additional_tools=[
-                McpToolset(
-                    connection_params=SseConnectionParams(
-                        url=MCP_SERVER_URL,
-                    ),
-                    header_provider=get_auth_headers,
-                    tool_filter=["get_order"],
-                )
+                get_order_mcp_toolset(tool_filter=["get_order"])
             ],
         )
     ],
 )
 
-# Sub-Agent 2: Skill-Based Refund Specialist (ADK 2.0 SkillToolset + McpToolset)
+# Sub-Agent 2: Skill-Based Refund Specialist (ADK 2.0 SkillToolset + AgentRegistry McpToolset)
 refund_specialist = Agent(
     name="refund_specialist",
     model=MODEL_CONFIG,
@@ -177,13 +223,7 @@ refund_specialist = Agent(
         SkillToolset(
             skills=[load_skill_from_dir(SKILLS_DIR / "refund-policy")],
             additional_tools=[
-                McpToolset(
-                    connection_params=SseConnectionParams(
-                        url=MCP_SERVER_URL,
-                    ),
-                    header_provider=get_auth_headers,
-                    tool_filter=["get_order", "process_refund"],
-                )
+                get_order_mcp_toolset(tool_filter=["get_order", "process_refund"])
             ],
         )
     ],

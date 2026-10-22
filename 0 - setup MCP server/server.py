@@ -7,6 +7,7 @@ mcp = FastMCP(
     "Order & Refund MCP Server",
     host="0.0.0.0",
     port=PORT,
+    stateless_http=True,
 )
 
 # Immutable mock database of orders (stateless across requests)
@@ -71,5 +72,19 @@ def process_refund(order_id: str, reason: str) -> dict:
 
 
 if __name__ == "__main__":
-    print(f"Starting MCP Server on http://0.0.0.0:{PORT}/sse ...")
-    mcp.run(transport="sse")
+    import uvicorn
+    from starlette.routing import Mount
+
+    # Build the primary Streamable HTTP app (used by AgentRegistry.get_mcp_toolset)
+    # and mount SSE routes alongside root Streamable HTTP for backward compatibility.
+    app = mcp.streamable_http_app()
+    sse_app = mcp.sse_app()
+    for route in sse_app.routes:
+        app.routes.append(route)
+    for route in list(app.routes):
+        if getattr(route, "path", None) == "/mcp":
+            app.routes.append(Mount("/", app=route.app))
+            break
+
+    print(f"Starting MCP Server on http://0.0.0.0:{PORT} (Streamable HTTP & SSE) ...")
+    uvicorn.run(app, host="0.0.0.0", port=PORT)

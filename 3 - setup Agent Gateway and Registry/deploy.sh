@@ -38,17 +38,12 @@ GATEWAY_NAME="${INPUT_GW_NAME:-order-agent-gateway}"
 
 # Detect live Cloud Run MCP URL from Stage 2 if available
 DETECTED_MCP_URL=$(gcloud run services describe order-mcp-server --region="$REGION" --project="$PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
-if [ -n "$DETECTED_MCP_URL" ]; then
-  DEFAULT_SSE_URL="${DETECTED_MCP_URL}/sse"
-else
-  DEFAULT_SSE_URL=""
-fi
 
-read -rp "Enter Live Cloud Run MCP SSE URL [${DEFAULT_SSE_URL}]: " INPUT_MCP_URL
-MCP_SSE_URL="${INPUT_MCP_URL:-$DEFAULT_SSE_URL}"
+read -rp "Enter Live Cloud Run MCP URL [${DETECTED_MCP_URL}]: " INPUT_MCP_URL
+MCP_SERVER_URL="${INPUT_MCP_URL:-$DETECTED_MCP_URL}"
 
-if [ -z "$MCP_SSE_URL" ]; then
-  echo "❌ Error: Cloud Run MCP SSE URL is required (e.g. from Stage 2)."
+if [ -z "$MCP_SERVER_URL" ]; then
+  echo "❌ Error: Cloud Run MCP URL is required (e.g. from Stage 2)."
   exit 1
 fi
 
@@ -57,7 +52,7 @@ echo "🚀 Configuration Summary:"
 echo "   - Project ID          : $PROJECT_ID"
 echo "   - Region              : $REGION"
 echo "   - Egress Gateway Name : $GATEWAY_NAME (AGENT_TO_ANYWHERE)"
-echo "   - MCP SSE URL         : $MCP_SSE_URL"
+echo "   - MCP Server URL      : $MCP_SERVER_URL"
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -115,8 +110,18 @@ gcloud agent-registry services create order-mcp-server \
   --display-name="Order and Refund MCP Server" \
   --description="FastMCP Server providing get_order and process_refund tools" \
   --mcp-server-spec-type=no-spec \
-  --interfaces="url=${MCP_SSE_URL},protocolBinding=jsonrpc" \
-  --quiet || echo "MCP Service already registered in Agent Registry, continuing..."
+  --interfaces="url=${MCP_SERVER_URL},protocolBinding=jsonrpc" \
+  --quiet 2>/dev/null || \
+gcloud agent-registry services update order-mcp-server \
+  --location="$REGION" \
+  --project="$PROJECT_ID" \
+  --interfaces="url=${MCP_SERVER_URL},protocolBinding=jsonrpc" \
+  --quiet || true
+
+TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token)
+MCP_REGISTRY_ID=$(curl -s -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT_ID" \
+  "https://agentregistry.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/mcpServers" \
+  | jq -r '.mcpServers[0].name // empty' 2>/dev/null || echo "")
 
 # ------------------------------------------------------------------------------
 # 5. Display Gateway Card & Certificate Details
@@ -144,8 +149,9 @@ echo "==========================================================================
 echo "✅ Stage 3 Setup Complete!"
 echo "   - Egress Gateway (Outbound) : projects/$PROJECT_ID/locations/$REGION/agentGateways/$GATEWAY_NAME"
 echo "   - Mode                      : AGENT_TO_ANYWHERE (Google Managed)"
-echo "   - Registered MCP Server     : order-mcp-server (${MCP_SSE_URL})"
-if [ -n "$GW_CARD" ]; then
+echo "   - Registered MCP Service    : order-mcp-server (${MCP_SERVER_URL})"
+echo "   - Agent Registry MCP Name   : ${MCP_REGISTRY_ID}"
+if [ -n "$GW_CERT" ]; then
   echo "   - Gateway Root Certificates : Provisioned & saved to Stage 1 app/gateway_ca.crt"
 fi
 echo "=============================================================================="

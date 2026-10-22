@@ -41,32 +41,26 @@ REGION="${INPUT_REGION:-us-central1}"
 read -rp "Enter Agent Gateway Name [order-agent-gateway]: " INPUT_GW_NAME
 GATEWAY_NAME="${INPUT_GW_NAME:-order-agent-gateway}"
 
-# Detect live Cloud Run MCP URL from Stage 2 if available
-DETECTED_MCP_URL=$(gcloud run services describe order-mcp-server --region="$REGION" --project="$PROJECT_ID" --format="value(status.url)" 2>/dev/null || echo "")
-if [ -n "$DETECTED_MCP_URL" ]; then
-  DEFAULT_SSE_URL="${DETECTED_MCP_URL}/sse"
-else
-  DEFAULT_SSE_URL=""
-fi
-
-read -rp "Enter Live Cloud Run MCP SSE URL [${DEFAULT_SSE_URL}]: " INPUT_MCP_URL
-MCP_SSE_URL="${INPUT_MCP_URL:-$DEFAULT_SSE_URL}"
-
 PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format="value(projectNumber)")
 TOKEN=$(gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token)
 
+# Detect registered MCP Server from Agent Registry REST API (no hardcoded URL required)
+MCP_SERVER_NAME=$(curl -s -H "Authorization: Bearer $TOKEN" -H "x-goog-user-project: $PROJECT_ID" \
+  "https://agentregistry.googleapis.com/v1alpha/projects/${PROJECT_ID}/locations/${REGION}/mcpServers" \
+  | jq -r '.mcpServers[0].name // empty' 2>/dev/null || echo "")
+
 echo ""
 echo "🚀 Deployment Configuration:"
-echo "   - Project ID     : $PROJECT_ID ($PROJECT_NUMBER)"
-echo "   - Region         : $REGION"
-echo "   - Agent Gateway  : projects/$PROJECT_ID/locations/$REGION/agentGateways/$GATEWAY_NAME"
-echo "   - MCP Server URL : $MCP_SSE_URL"
+echo "   - Project ID      : $PROJECT_ID ($PROJECT_NUMBER)"
+echo "   - Region          : $REGION"
+echo "   - Agent Gateway   : projects/$PROJECT_ID/locations/$REGION/agentGateways/$GATEWAY_NAME"
+echo "   - Registry MCP ID : ${MCP_SERVER_NAME:-Auto-discovered via AgentRegistry}"
 echo ""
 
 # ------------------------------------------------------------------------------
-# 2. Update .env in Stage 1 with Live Project, Location & MCP Server URL
+# 2. Update .env in Stage 1 with Live Project, Location & Agent Registry Config
 # ------------------------------------------------------------------------------
-echo "==> [1/6] Updating Stage 1 .env with live Project, Global Location & MCP URL..."
+echo "==> [1/6] Updating Stage 1 .env with live Project & Agent Registry config..."
 AGENT_DIR="$SCRIPT_DIR/../1 - multi agent ADK app/order-assistant"
 
 if [ ! -d "$AGENT_DIR" ]; then
@@ -82,9 +76,15 @@ cat > "$AGENT_DIR/.env" << EOF
 GOOGLE_GENAI_USE_VERTEXAI=true
 GOOGLE_CLOUD_PROJECT=${PROJECT_ID}
 GOOGLE_CLOUD_LOCATION=global
-MCP_SERVER_URL=${MCP_SSE_URL}
+AGENT_REGISTRY_LOCATION=${REGION}
 EOF
-echo "   ✅ Configured .env with project: $PROJECT_ID, location: global, MCP: $MCP_SSE_URL"
+if [ -n "$MCP_SERVER_NAME" ]; then
+  echo "MCP_SERVER_NAME=${MCP_SERVER_NAME}" >> "$AGENT_DIR/.env"
+  DEPLOY_ENV_VARS="AGENT_REGISTRY_LOCATION=${REGION},MCP_SERVER_NAME=${MCP_SERVER_NAME}"
+else
+  DEPLOY_ENV_VARS="AGENT_REGISTRY_LOCATION=${REGION}"
+fi
+echo "   ✅ Configured .env with project: $PROJECT_ID, AGENT_REGISTRY_LOCATION: $REGION, MCP_SERVER_NAME: ${MCP_SERVER_NAME:-auto}"
 
 
 # ------------------------------------------------------------------------------
@@ -120,7 +120,7 @@ agents-cli deploy \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --agent-identity \
-  --update-env-vars "MCP_SERVER_URL=${MCP_SSE_URL}" \
+  --update-env-vars "${DEPLOY_ENV_VARS}" \
   --no-confirm-project
 
 # Extract the deployed reasoning engine resource ID from deployment_metadata.json
