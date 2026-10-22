@@ -1,6 +1,8 @@
 # Production Multi-Agent Architecture with Google Cloud Agent Gateway & SPIFFE Identity
 
-An enterprise-grade, end-to-end reference architecture implementing governed multi-agent systems using the **Google Agent Development Kit (ADK 2.0)**, **Vertex AI Agent Engine (Reasoning Engine)**, **FastMCP (Model Context Protocol)**, and **Google Cloud Agent Gateway**.
+![Architecture Banner](./assets/architecture_banner.png)
+
+An enterprise-grade, end-to-end reference architecture implementing governed multi-agent systems using the **Google Agent Development Kit (ADK 2.0)**, **Vertex AI Agent Engine (Reasoning Engine)**, **Google Cloud Agent Registry**, **FastMCP (Model Context Protocol)**, and **Google Cloud Agent Gateway**.
 
 Governed by cryptographic **SPIFFE Agent Identity**, **Regional Model Armor with Sensitive Data Protection (DLP SDP)**, and **MCP Protocol-Level Tool Governance**.
 
@@ -65,9 +67,10 @@ Modern autonomous AI agents require direct integration with downstream databases
 │ • Dynamic Skills: order-tracking & refund-policy (unlocks MCP tools on demand)         │
 │ • Cryptographic SPIFFE Agent Identity:                                                 │
 │   principal://agents.global.org-<ORG_ID>.system.id.goog/.../reasoningEngines/<ID>       │
+│ • Discovers MCP tools dynamically via AgentRegistry.get_mcp_toolset()                  │
 │ • Gateway TLS Inspection CA trusted via /tmp/ca-bundle-custom.crt                       │
 └───────────────────────────────────────────┬────────────────────────────────────────────┘
-                                            │ Outbound Call (MCP_SERVER_URL)
+                                            │ Outbound Streamable HTTP JSON-RPC
                                             ▼
 ┌────────────────────────────────────────────────────────────────────────────────────────┐
 │ Google Cloud Agent Gateway (Google-Managed AGENT_TO_ANYWHERE Egress Mode)              │
